@@ -15,8 +15,8 @@ const client_id = process.env.XERO_CLIENT_ID;
 const client_secret = process.env.XERO_CLIENT_SECRET;
 const redirect_uri = process.env.XERO_REDIRECT_URI;
 
-// ✅ Define scopes globally so they can be updated easily
-const xeroScopes = process.env.XERO_SCOPES || "openid email profile accounting.transactions accounting.contacts";
+// ✅ Define Xero Scopes Globally
+const xeroScopes = process.env.XERO_SCOPES || "openid email profile accounting.transactions accounting.contacts accounting.settings offline_access";
 
 let xeroClient;
 
@@ -43,7 +43,7 @@ app.get('/auth/xero', (req, res) => {
         return res.status(500).json({ error: "Xero OAuth client not initialized" });
     }
     const authUrl = xeroClient.authorizationUrl({
-        scope: xeroScopes,
+        scope: xeroScopes,  // Uses the global variable for scopes
         state: generators.state(),
     });
     res.redirect(authUrl);
