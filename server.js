@@ -15,44 +15,59 @@ const client_id = process.env.XERO_CLIENT_ID;
 const client_secret = process.env.XERO_CLIENT_SECRET;
 const redirect_uri = process.env.XERO_REDIRECT_URI;
 
+// ✅ Define scopes globally so they can be updated easily
+const xeroScopes = process.env.XERO_SCOPES || "openid email profile accounting.transactions accounting.contacts";
+
 let xeroClient;
 
-// Initialize OAuth2 Client
+// ✅ Initialize OAuth2 Client with Xero
 async function setupXeroClient() {
-    const issuer = await Issuer.discover('https://identity.xero.com');
-    xeroClient = new issuer.Client({
-        client_id,
-        client_secret,
-        redirect_uris: [redirect_uri],
-        response_types: ['code'],
-    });
+    try {
+        const issuer = await Issuer.discover('https://identity.xero.com');
+        xeroClient = new issuer.Client({
+            client_id,
+            client_secret,
+            redirect_uris: [redirect_uri],
+            response_types: ['code'],
+        });
+        console.log("✅ Xero OAuth2 Client Initialized Successfully");
+    } catch (error) {
+        console.error("❌ Error Initializing Xero Client:", error);
+    }
 }
 setupXeroClient();
 
-// Redirect to Xero Login
+// ✅ Redirect to Xero Login
 app.get('/auth/xero', (req, res) => {
+    if (!xeroClient) {
+        return res.status(500).json({ error: "Xero OAuth client not initialized" });
+    }
     const authUrl = xeroClient.authorizationUrl({
-        scope: 'accounting.transactions accounting.contacts openid profile email',
+        scope: xeroScopes,
         state: generators.state(),
     });
     res.redirect(authUrl);
 });
 
-// Handle Xero Callback & Get Token
+// ✅ Handle Xero Callback & Get Token
 app.get('/callback', async (req, res) => {
     try {
+        if (!xeroClient) {
+            return res.status(500).json({ error: "Xero OAuth client not initialized" });
+        }
+
         const params = xeroClient.callbackParams(req);
         const tokenSet = await xeroClient.callback(redirect_uri, params, { state: req.query.state });
 
-        console.log('Xero Access Token:', tokenSet.access_token);
+        console.log('✅ Xero Access Token:', tokenSet.access_token);
         res.json({ success: true, access_token: tokenSet.access_token });
     } catch (error) {
-        console.error('Xero OAuth Error:', error);
+        console.error('❌ Xero OAuth Error:', error);
         res.status(500).json({ error: 'OAuth authentication failed' });
     }
 });
 
-// Fetch Expenses from Xero API
+// ✅ Fetch Expenses from Xero API
 app.get('/api/saas-expenses', async (req, res) => {
     try {
         const token = req.query.token;
@@ -69,10 +84,10 @@ app.get('/api/saas-expenses', async (req, res) => {
 
         res.json({ subscriptions: invoices });
     } catch (error) {
-        console.error("Xero API Error:", error);
+        console.error("❌ Xero API Error:", error.response ? error.response.data : error);
         res.status(500).json({ error: "Failed to fetch data from Xero" });
     }
 });
 
-// Start Server
+// ✅ Start Server
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
