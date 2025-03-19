@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
+const fs = require('fs');
 const OpenIdClient = require('openid-client');
 const Issuer = OpenIdClient.Issuer;
 const generators = OpenIdClient.generators;
@@ -66,6 +67,10 @@ app.get('/callback', async (req, res) => {
         xeroRefreshToken = tokenSet.refresh_token;
         tokenExpiresAt = Date.now() + tokenSet.expires_in * 1000;
 
+        // ✅ Save tokens to files for persistence
+        fs.writeFileSync("token.txt", xeroAccessToken);
+        fs.writeFileSync("refresh_token.txt", xeroRefreshToken);
+
         process.env.XERO_ACCESS_TOKEN = xeroAccessToken;
         process.env.XERO_REFRESH_TOKEN = xeroRefreshToken;
         process.env.XERO_TOKEN_EXPIRES = tokenExpiresAt;
@@ -80,7 +85,7 @@ app.get('/callback', async (req, res) => {
         });
 
     } catch (error) {
-        console.error('❌ Xero OAuth Error:', error);
+        console.error('❌ Xero OAuth Error:', error.response ? error.response.data : error);
         res.status(500).json({ error: 'OAuth authentication failed' });
     }
 });
@@ -107,6 +112,10 @@ async function refreshXeroToken() {
         xeroAccessToken = response.data.access_token;
         xeroRefreshToken = response.data.refresh_token;
         tokenExpiresAt = Date.now() + response.data.expires_in * 1000;
+
+        // ✅ Save tokens to files for persistence
+        fs.writeFileSync("token.txt", xeroAccessToken);
+        fs.writeFileSync("refresh_token.txt", xeroRefreshToken);
 
         process.env.XERO_ACCESS_TOKEN = xeroAccessToken;
         process.env.XERO_REFRESH_TOKEN = xeroRefreshToken;
