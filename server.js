@@ -1,7 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
-const cors = require('cors'); 
+const cors = require('cors');
 const OpenIdClient = require('openid-client');
 const Issuer = OpenIdClient.Issuer;
 const generators = OpenIdClient.generators;
@@ -14,9 +14,11 @@ const PORT = process.env.PORT || 5050;
 const client_id = process.env.XERO_CLIENT_ID;
 const client_secret = process.env.XERO_CLIENT_SECRET;
 const redirect_uri = process.env.XERO_REDIRECT_URI;
-
-// ✅ Define Xero Scopes Globally
 const xeroScopes = process.env.XERO_SCOPES || "openid email profile accounting.transactions accounting.contacts accounting.settings offline_access";
+
+let xeroAccessToken = process.env.XERO_ACCESS_TOKEN || null;
+let xeroRefreshToken = process.env.XERO_REFRESH_TOKEN || null;
+let tokenExpiresAt = process.env.XERO_TOKEN_EXPIRES || 0;
 
 let xeroClient;
 
@@ -43,13 +45,13 @@ app.get('/auth/xero', (req, res) => {
         return res.status(500).json({ error: "Xero OAuth client not initialized" });
     }
     const authUrl = xeroClient.authorizationUrl({
-        scope: xeroScopes,  // Uses the global variable for scopes
+        scope: xeroScopes,
         state: generators.state(),
     });
     res.redirect(authUrl);
 });
 
-// ✅ Handle Xero Callback & Get Token
+// ✅ Handle Xero Callback & Store Tokens
 app.get('/callback', async (req, res) => {
     try {
         if (!xeroClient) {
@@ -59,30 +61,80 @@ app.get('/callback', async (req, res) => {
         const params = xeroClient.callbackParams(req);
         const tokenSet = await xeroClient.callback(redirect_uri, params, { state: req.query.state });
 
-        console.log('✅ Xero Access Token:', tokenSet.access_token);
-        res.json({ success: true, access_token: tokenSet.access_token });
+        // ✅ Store both access & refresh tokens
+        xeroAccessToken = tokenSet.access_token;
+        xeroRefreshToken = tokenSet.refresh_token;
+        tokenExpiresAt = Date.now() + tokenSet.expires_in * 1000;
+
+        process.env.XERO_ACCESS_TOKEN = xeroAccessToken;
+        process.env.XERO_REFRESH_TOKEN = xeroRefreshToken;
+        process.env.XERO_TOKEN_EXPIRES = tokenExpiresAt;
+
+        console.log('✅ Xero Access Token:', xeroAccessToken);
+        console.log('🔄 Xero Refresh Token:', xeroRefreshToken);
+
+        res.json({ 
+            success: true, 
+            access_token: xeroAccessToken, 
+            refresh_token: xeroRefreshToken 
+        });
+
     } catch (error) {
         console.error('❌ Xero OAuth Error:', error);
         res.status(500).json({ error: 'OAuth authentication failed' });
     }
 });
 
-// ✅ Fetch Expenses from Xero API
-app.get('/api/saas-expenses', async (req, res) => {
-    try {
-        const token = req.query.token;
-        if (!token) return res.status(401).json({ error: "Missing access token" });
+// ✅ Refresh Xero Access Token Automatically
+async function refreshXeroToken() {
+    if (Date.now() < tokenExpiresAt - 60000) {
+        return xeroAccessToken; // ✅ Token is still valid
+    }
 
-        const response = await axios.get("https://api.xero.com/api.xro/2.0/Invoices", {
-            headers: { Authorization: `Bearer ${token}` },
+    try {
+        console.log("🔄 Refreshing Xero Access Token...");
+
+        const response = await axios.post('https://identity.xero.com/connect/token', null, {
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            auth: { username: client_id, password: client_secret },
+            params: {
+                grant_type: 'refresh_token',
+                refresh_token: xeroRefreshToken,
+            },
         });
 
-        const invoices = response.data.Invoices.map(invoice => ({
-            name: invoice.Contact.Name,
-            cost: `$${invoice.Total} AUD`,
-        }));
+        // ✅ Update stored tokens
+        xeroAccessToken = response.data.access_token;
+        xeroRefreshToken = response.data.refresh_token;
+        tokenExpiresAt = Date.now() + response.data.expires_in * 1000;
 
-        res.json({ subscriptions: invoices });
+        process.env.XERO_ACCESS_TOKEN = xeroAccessToken;
+        process.env.XERO_REFRESH_TOKEN = xeroRefreshToken;
+        process.env.XERO_TOKEN_EXPIRES = tokenExpiresAt;
+
+        console.log("✅ Successfully refreshed Xero token!");
+        return xeroAccessToken;
+    } catch (error) {
+        console.error("❌ Failed to refresh Xero token:", error.response ? error.response.data : error);
+        throw new Error("Failed to refresh Xero token");
+    }
+}
+
+// ✅ Fetch Invoices from Xero API
+app.get('/api/saas-expenses', async (req, res) => {
+    try {
+        const token = await refreshXeroToken(); // ✅ Ensure we have a fresh token
+        const tenantId = process.env.XERO_TENANT_ID;
+
+        const response = await axios.get("https://api.xero.com/api.xro/2.0/Invoices", {
+            headers: { 
+                Authorization: `Bearer ${token}`,
+                "Xero-Tenant-Id": tenantId,
+                Accept: "application/json"
+            },
+        });
+
+        res.json(response.data);
     } catch (error) {
         console.error("❌ Xero API Error:", error.response ? error.response.data : error);
         res.status(500).json({ error: "Failed to fetch data from Xero" });
